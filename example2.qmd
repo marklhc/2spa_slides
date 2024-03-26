@@ -1,0 +1,432 @@
+---
+title: "Example 2"
+format:
+  gfm:
+    toc: true
+---
+
+```{r}
+library(lavaan)
+library(R2spa)
+library(semlrtp)  # for likelihood ratio test; can be obtained from https://github.com/sfcheung/semlrtp
+```
+
+We use the example from [this tutorial](https://quantdev.ssri.psu.edu/tutorials/growth-modeling-chapter-14-modeling-change-latent-variables-measured-continuous) from Chapter 14 of the book *Growth Modeling* (Grimm, Ram & Estabrook, 2017) to demonstrate how to perform linear growth modeling with two-stage path analysis (2S-PA)
+
+```{r}
+#| eval: false
+#| echo: true
+# Load data
+eclsk <- read.csv(
+    "https://quantdev.ssri.psu.edu/sites/qdev/files/ECLS_Science.csv",
+    header = TRUE
+)
+```
+
+```{r}
+#| include: false
+#| eval: false
+saveRDS(eclsk, here::here("eclsk.rds"))
+```
+
+```{r}
+#| include: false
+eclsk <- readRDS(here::here("eclsk.rds"))
+```
+
+## Joint structural equation model: Latent growth with strict invariance model
+
+In the [tutorial](https://quantdev.ssri.psu.edu/tutorials/growth-modeling-chapter-14-modeling-change-latent-variables-measured-continuous), the authors first performed longitudinal invariance testing and found support for strict invariance. They moved on to fit a latent growth model based on the strict invariance model, as shown below. 
+
+```{r}
+measurement_mod <- "
+# factor loadings (with constraints)
+eta1 =~ l1 * s_g3 + l2 * r_g3 + l3 * m_g3
+eta2 =~ l1 * s_g5 + l2 * r_g5 + l3 * m_g5
+eta3 =~ l1 * s_g8 + l2 * r_g8 + l3 * m_g8
+
+# unique variances/covariances 
+s_g3 ~~ u1 * s_g3 + s_g5 + s_g8
+s_g5 ~~ u1 * s_g5 + s_g8
+s_g8 ~~ u1 * s_g8
+r_g3 ~~ u2 * r_g3 + r_g5 + r_g8
+r_g5 ~~ u2 * r_g5 + r_g8
+r_g8 ~~ u2 * r_g8
+m_g3 ~~ u3 * m_g3 + m_g5 + m_g8
+m_g5 ~~ u3 * m_g5 + m_g8
+m_g8 ~~ u3 * m_g8
+
+# observed variable intercepts
+s_g3 ~ i1 * 1
+s_g5 ~ i1 * 1
+s_g8 ~ i1 * 1
+r_g3 ~ i2 * 1
+r_g5 ~ i2 * 1
+r_g8 ~ i2 * 1
+m_g3 ~ i3 * 1
+m_g5 ~ i3 * 1
+m_g8 ~ i3 * 1
+"
+
+jsem_growth_mod <- paste0(measurement_mod, "
+# factor variances
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+# latent basis model
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+s =~ 0 * eta1 + start(.5) * eta2 + 1 * eta3
+
+i ~~ vi * i + start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i ~ 0 * 1
+s ~ 1
+
+# standardize first time point
+1 == psi + vi
+")
+jsem_growth_fit <- sem(jsem_growth_mod,
+                       data = eclsk,
+                       meanstructure = TRUE,
+                       auto.fix.first = FALSE,
+                       estimator = "ML",
+                       missing = "listwise")
+```
+
+Intercept-only model
+
+```{r}
+jsem_location_mod <- paste0(measurement_mod, "
+# factor variances
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+# location model
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+
+i ~~ vi * i + start(.8) * i
+
+i ~ 0 * 1
+
+# standardize first time point
+1 == psi + vi
+")
+jsem_location_fit <- sem(jsem_location_mod,
+                         data = eclsk,
+                         meanstructure = TRUE,
+                         auto.fix.first = FALSE,
+                         estimator = "ML",
+                         missing = "listwise")
+```
+
+## Measurement (Free Structural) Model
+
+```{r}
+strict_mod <- paste0(measurement_mod, "
+# factor variances
+eta1 ~~ 1 * eta1 + eta2 + eta3
+eta2 ~~ eta2 + eta3
+eta3 ~~ eta3
+
+# latent variable intercepts
+eta1 ~ 0 * 1
+eta2 ~ 1
+eta3 ~ 1
+")
+strict_fit <- lavaan(strict_mod,
+                     data = eclsk,
+                     meanstructure = TRUE,
+                     estimator = "ML",
+                     missing = "listwise")
+```
+
+Interpretational Confounding
+
+- The definition of the latent variables (i.e., the loadings) changes depending on the structural model
+
+```{r}
+cbind(lavInspect(jsem_growth_fit, what = "est")$lambda[1:3, 1],
+      lavInspect(jsem_location_fit, what = "est")$lambda[1:3, 1],
+      lavInspect(strict_fit, what = "est")$lambda[1:3, 1]) |>
+    `colnames<-`(c("latent basis", "location", "measurement only")) |>
+    knitr::kable()
+```
+
+### Partial Invariance
+
+Modification indices on intercept constraints
+
+```{r}
+modindices(strict_fit, op = "~1", free.remove = FALSE)
+```
+
+The measurement intercept for `s_g5` at Time 2 has a large MI, and that for `s_g8` at Time 3 is big too. This suggests the science indicator may not be invariant over time, so we free the intercepts for those.
+
+```{r}
+measurement2_mod <- "
+# factor loadings (with constraints)
+eta1 =~ l1 * s_g3 + l2 * r_g3 + l3 * m_g3
+eta2 =~ l1 * s_g5 + l2 * r_g5 + l3 * m_g5
+eta3 =~ l1 * s_g8 + l2 * r_g8 + l3 * m_g8
+
+# unique variances/covariances 
+s_g3 ~~ u1 * s_g3 + s_g5 + s_g8
+s_g5 ~~ u1 * s_g5 + s_g8
+s_g8 ~~ u1 * s_g8
+r_g3 ~~ u2 * r_g3 + r_g5 + r_g8
+r_g5 ~~ u2 * r_g5 + r_g8
+r_g8 ~~ u2 * r_g8
+m_g3 ~~ u3 * m_g3 + m_g5 + m_g8
+m_g5 ~~ u3 * m_g5 + m_g8
+m_g8 ~~ u3 * m_g8
+
+# observed variable intercepts
+s_g3 ~ 1
+s_g5 ~ 1
+s_g8 ~ 1
+r_g3 ~ i2 * 1
+r_g5 ~ i2 * 1
+r_g8 ~ i2 * 1
+m_g3 ~ i3 * 1
+m_g5 ~ i3 * 1
+m_g8 ~ i3 * 1
+"
+pscalar_mod <- paste0(measurement2_mod, "
+# factor variances
+eta1 ~~ 1 * eta1 + eta2 + eta3
+eta2 ~~ eta2 + eta3
+eta3 ~~ eta3
+
+# latent variable intercepts
+eta1 ~ 0 * 1
+eta2 ~ 1
+eta3 ~ 1
+")
+pscalar_fit <- lavaan(pscalar_mod,
+                      data = eclsk,
+                      meanstructure = TRUE,
+                      estimator = "ML",
+                      missing = "listwise")
+anova(strict_fit, pscalar_fit)
+```
+
+Second-order growth model with partial invariance
+
+```{r}
+# Constrain one loading as done in Grimm et al. (2017)
+measurement3_mod <- "
+# factor loadings (with constraints)
+eta1 =~ l1 * s_g3 + 22.603 * r_g3 + l3 * m_g3
+eta2 =~ l1 * s_g5 + 22.603 * r_g5 + l3 * m_g5
+eta3 =~ l1 * s_g8 + 22.603 * r_g8 + l3 * m_g8
+
+# unique variances/covariances 
+s_g3 ~~ u1 * s_g3 + s_g5 + s_g8
+s_g5 ~~ u1 * s_g5 + s_g8
+s_g8 ~~ u1 * s_g8
+r_g3 ~~ u2 * r_g3 + r_g5 + r_g8
+r_g5 ~~ u2 * r_g5 + r_g8
+r_g8 ~~ u2 * r_g8
+m_g3 ~~ u3 * m_g3 + m_g5 + m_g8
+m_g5 ~~ u3 * m_g5 + m_g8
+m_g8 ~~ u3 * m_g8
+
+# observed variable intercepts
+s_g3 ~ 1
+s_g5 ~ 1
+s_g8 ~ 1
+r_g3 ~ 130.453 * 1
+r_g5 ~ 130.453 * 1
+r_g8 ~ 130.453 * 1
+m_g3 ~ i3 * 1
+m_g5 ~ i3 * 1
+m_g8 ~ i3 * 1
+"
+jsem_growth2_mod <- paste0(measurement3_mod, "
+# factor variances
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+# latent basis model
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+s =~ 0 * eta1 + start(.5) * eta2 + 1 * eta3
+
+i ~~ start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i ~ 1
+s ~ 1
+")
+jsem_growth2_fit <- sem(jsem_growth2_mod,
+                        data = eclsk,
+                        meanstructure = TRUE,
+                        auto.fix.first = FALSE,
+                        estimator = "ML",
+                        missing = "listwise")
+```
+
+## Two-Stage Path Analysis
+
+### With Regression factor scores
+
+Obtain factor scores using `R2spa::get_fs_lavaan()`, and the needed input for `R2spa::tspa()`
+
+```{r}
+fs_rs <- R2spa::get_fs_lavaan(pscalar_fit)
+fs_loading <- attr(fs_rs, which = "fsL")
+fs_errorvar <- attr(fs_rs, which = "fsT")
+fs_intercept <- attr(fs_rs, which = "fsb")
+```
+
+Alternatively, can be done by hand
+
+```{r}
+#| eval: false
+fs_rs <- lavPredict(pscalar_fit, acov = TRUE, fsm = TRUE)
+# Obtain loadings, error covariances, and intercepts
+pars <- lavInspect(pscalar_fit, what = "est")
+psi <- pars$psi
+alpha <- pars$alpha
+fs_loading <- diag(3) - attr(fs_rs, which = "acov")[[1]] %*% solve(psi)
+fs_names <- paste0("fs_", c("eta1", "eta2", "eta3"))
+rownames(fs_loading) <- fs_names
+fs_errorvar <- fs_loading %*% attr(fs_rs, which = "acov")[[1]]
+dimnames(fs_errorvar) <- rep(list(fs_names), 2)
+fs_intercept <- c(alpha - fs_loading %*% alpha)
+names(fs_intercept) <- fs_names
+colnames(fs_rs)[1:3] <- fs_names
+```
+
+Growth Model with 2S-PA
+
+```{r}
+# Growth model
+growth_mod <- "
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+s =~ 0 * eta1 + start(.5) * eta2 + 1 * eta3
+
+# factor variances
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+i ~~ start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i ~ 1
+s ~ 1
+"
+# Fit the growth model
+tspa_growth_fit <- tspa(growth_mod, data = data.frame(fs_rs),
+                        fsL = fs_loading,
+                        fsT = fs_errorvar,
+                        fsb = fs_intercept,
+                        estimator = "ML")
+summary(tspa_growth_fit)
+```
+
+### With Bartlett factor scores
+
+```{r}
+fs_bs <- R2spa::get_fs_lavaan(pscalar_fit, method = "Bartlett")
+fs_loading <- attr(fs_bs, which = "fsL")
+fs_errorvar <- attr(fs_bs, which = "fsT")
+fs_intercept <- attr(fs_bs, which = "fsb")
+```
+
+Alternatively, can be done by hand
+
+```{r}
+#| eval: false
+fs_bs <- lavPredict(pscalar_fit, acov = TRUE, fsm = TRUE,
+                    method = "Bartlett")
+# Obtain loadings, error covariances, and intercepts
+pars <- lavInspect(pscalar_fit, what = "est")
+psi <- pars$psi
+alpha <- pars$alpha
+fs_loading <- diag(3)  # property of Bartlett score
+fs_names <- paste0("fs_", c("eta1", "eta2", "eta3"))
+rownames(fs_loading) <- fs_names
+fs_errorvar <- attr(fs_bs, which = "acov")[[1]]
+dimnames(fs_errorvar) <- rep(list(fs_names), 2)
+fs_intercept <- rep(0, 3)  # property of Bartlett score
+names(fs_intercept) <- fs_names
+colnames(fs_bs)[1:3] <- fs_names
+```
+
+Growth Model with 2S-PA
+
+```{r}
+# Fit the growth model
+tspa_growth2_fit <- tspa(growth_mod, data = data.frame(fs_bs),
+                         fsL = fs_loading,
+                         fsT = fs_errorvar,
+                         fsb = fs_intercept,
+                         estimator = "ML")
+summary(tspa_growth2_fit)
+```
+
+## Compare to Using Just Factor Scores
+
+```{r}
+fs_growth_mod <- "
+i =~ 1 * fs_eta1 + 1 * fs_eta2 + 1 * fs_eta3
+s =~ 0 * fs_eta1 + start(.5) * fs_eta2 + 1 * fs_eta3
+
+# factor variances
+fs_eta1 ~~ psi * fs_eta1
+fs_eta2 ~~ psi * fs_eta2
+fs_eta3 ~~ psi * fs_eta3
+
+i ~~ start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i ~ 1
+s ~ 1
+"
+growth_fit <- growth(fs_growth_mod,
+                     data = data.frame(fs_rs),
+                     meanstructure = TRUE,
+                     estimator = "ML",
+                     missing = "listwise")
+growth2_fit <- growth(fs_growth_mod,
+                      data = data.frame(fs_bs),
+                      meanstructure = TRUE,
+                      estimator = "ML",
+                      missing = "listwise")
+```
+
+The table below shows the difference in estimates and test statistics:
+
+```{r}
+options(knitr.kable.NA = "")
+rbind(as.data.frame(
+        lrtp(jsem_growth2_fit, op = c("~~", "~1"))
+    )[c(50, 47), c("est", "se", "Chisq")],
+    as.data.frame(
+        lrtp(tspa_growth_fit, op = c("~~", "~1"))
+    )[c(32, 29), c("est", "se", "Chisq")],
+    as.data.frame(
+        lrtp(tspa_growth2_fit, op = c("~~", "~1"))
+    )[c(32, 29), c("est", "se", "Chisq")],
+    as.data.frame(
+        lrtp(growth_fit, op = c("~~", "~1"))
+    )[c(14, 11), c("est", "se", "Chisq")],
+    as.data.frame(
+        lrtp(growth2_fit, op = c("~~", "~1"))
+    )[c(14, 11), c("est", "se", "Chisq")]) |>
+    base::`[`(c(1, 3, 5, 7, 9, 2, 4, 6, 8, 10), ) |>
+    cbind(Parameter = c("Mean slope", rep("", 4),
+                        "Var slope", rep("", 4)),
+          Model = rep(c("JSEM", "2S-PA (Reg)", "2S-PA (Bart)", "FS (Reg)", "FS (Bart)"), 2)) |>
+    base::`[`(, c(4:5, 1:3)) |>
+    knitr::kable(col.names = c("Parameter", "Model", "Est", "SE", "$\\chi^2$"), row.names = FALSE, digits = 3)
+```

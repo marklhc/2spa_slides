@@ -1,0 +1,274 @@
+---
+title: "Example 1"
+format:
+  gfm:
+    toc: true
+---
+
+```{r}
+#| message: false
+library(haven)
+library(dplyr)
+library(ggplot2)
+library(mirt)
+library(umx)
+library(R2spa)
+```
+
+Import data
+
+```{r}
+#| eval: false
+#| echo: true
+lui2019_dat <- haven::read_sav("https://osf.io/download/wxjsg/")
+dat <- lui2019_dat |>
+    filter(if_all(c(class14, audit1:audit3), ~ !is.na(.))) |>
+    filter(eth %in% 1:4) |>
+    mutate(across(c(class1:class15, audit1:audit10), as.numeric)) |>
+    mutate(
+        campuslive = as_factor(campuslive),
+        eth = factor(eth,
+            levels = 1:4,
+            labels = c("White", "Asian", "Black", "Hispanic")
+        )
+    ) |>
+    arrange(eth)
+```
+
+```{r}
+#| include: false
+#| eval: false
+saveRDS(dat, here::here("lui2019_dat.rds"))
+```
+
+```{r}
+#| include: false
+dat <- readRDS(here::here("lui2019_dat.rds"))
+```
+
+## CLASS (College Life Alcohol Salience Scale)
+
+```{r}
+#| eval: false
+m1c <- mirt::multipleGroup(
+    dat[, paste0("class", 1:15)],
+    group = dat$eth,
+    invariance = c(
+        "free_mean", "free_var",
+        "intercepts", "slopes"
+    ),
+    verbose = FALSE
+)
+DIF(m1c,
+    which.par = c("a1"),
+    scheme = "drop"
+)
+DIF(m1c,
+    which.par = c("d1", "d2", "d3", "d4"),
+    scheme = "drop"
+)
+DIF(m1c,
+    which.par = c("a1", "d1", "d2", "d3", "d4"),
+    scheme = "drop"
+)
+```
+
+```{r}
+# Free intercepts for item 14
+m2c <- mirt::multipleGroup(
+    dat[, paste0("class", 1:15)],
+    group = dat$eth,
+    invariance = c(
+        paste0("class", c(1:13, 15)),
+        "slopes", "free_mean", "free_var"
+    ),
+    verbose = FALSE
+)
+coef(m2c, simplify = TRUE)
+```
+
+This is consistent with Lui (2019)
+
+### Obtain factor scores
+
+```{r}
+fs_class <- fscores(m2c, full.scores.SE = TRUE)
+head(fs_class)
+# Distribution of factor scores
+hist(fs_class[, 1])
+# By ethnicity
+ggplot(data = data.frame(fs_class), aes(x = F1)) +
+    geom_histogram() +
+    facet_wrap(~ dat$eth)
+# Relationship between factor scores and standard errors
+plot(fs_class[, 1], fs_class[, 2])
+```
+
+## AUDIT (Alcohol Use Disorders Identification Test)
+
+- 7 items on negative alcohol-related consequences
+
+```{r}
+# AUDIT
+m1a <- mirt(dat[, paste0("audit", 4:10)], verbose = FALSE)
+```
+
+### Obtain factor scores
+
+```{r}
+fs_audit <- fscores(m1a, full.scores.SE = TRUE)
+head(fs_audit)
+# Distribution of factor scores
+hist(fs_audit[, 1])
+# By ethnicity
+ggplot(data = data.frame(fs_audit), aes(x = F1)) +
+    geom_histogram() +
+    facet_wrap(~ dat$eth)
+# Relationship between factor scores and standard errors
+plot(fs_audit[, 1], fs_audit[, 2])
+```
+
+## Combine factor scores
+
+```{r}
+colnames(fs_class) <- c("fs_class", "class_se")
+colnames(fs_audit) <- c("fs_audit", "audit_se")
+fs_dat <- data.frame(cbind(fs_class, fs_audit))
+head(fs_dat)
+# Plot
+p1 <- ggplot(
+    data = fs_dat,
+    aes(x = fs_class, y = fs_audit)
+) +
+    geom_point(size = 0.5, alpha = 0.5) +
+    facet_wrap(~ dat$eth)
+p1 + geom_smooth()
+# With error bar
+p1 +
+    geom_errorbar(aes(
+        xmin = fs_class - class_se,
+        xmax = fs_class + class_se
+    ), linewidth = 0.1) +
+    geom_errorbar(aes(
+        ymin = fs_audit - audit_se,
+        ymax = fs_audit + audit_se
+    ), linewidth = 0.1)
+```
+
+## Factor Score Regression
+
+This ignores measurement error
+
+```{r}
+lm(fs_audit ~ fs_class, data = fs_dat) |>
+    summary()
+# With OpenMx
+fsreg_umx_fit <- umxRAM(
+    "
+    fs_audit ~ fs_class
+    ",
+    data = fs_dat,
+    autoRun = FALSE
+)
+```
+
+```{r}
+#| results: asis
+umxSummary(mxRun(fsreg_umx_fit), digits = 3, std = TRUE,
+           means = FALSE, residuals = FALSE)
+# With robust SE
+# fsreg_robust <- imxRobustSE(fsreg_umx_fit, details = TRUE)
+# fsreg_std <- mxStandardizeRAMpaths(fsreg_umx_fit, SE = TRUE, cov = fsreg_robust$cov)
+# fsreg_std[fsreg_std$label == "fs_class_to_fs_audit", ]
+```
+
+## Joint Modeling with WLS
+
+Ignore partial invariance/DIF
+
+```{r}
+jreg_umx_fit <- umxRAM(
+    "
+    CLASS =~ class1 + class2 + class3 + class4 + class5 + class6 + class7 +
+             class8 + class9 + class10 + class11 + class12 + class13 +
+             class14 + class15
+    AUDIT =~ audit4 + audit5 + audit6 + audit7 + audit8 + audit9 + audit10
+    AUDIT ~ CLASS
+    ",
+    data = dat,
+    type = "DWLS",
+    autoRun = FALSE
+)
+```
+
+```{r}
+#| results: asis
+umxSummary(mxRun(jreg_umx_fit), digits = 3, std = TRUE,
+           means = FALSE, residuals = FALSE)
+```
+
+## Two-Stage Path Analysis
+
+```{r}
+# Prepare data
+fs_dat <- fs_dat |>
+    within(expr = {
+        rel_class <- 1 - class_se^2
+        rel_audit <- 1 - audit_se^2
+        ev_class <- class_se^2 * (1 - class_se^2)
+        ev_audit <- audit_se^2 * (1 - audit_se^2)
+    })
+```
+
+```{r}
+latreg_umx <- umxLav2RAM(
+    "
+      fs_audit ~ fs_class
+      fs_audit + fs_class ~ 1
+    ",
+    printTab = FALSE
+)
+cross_load <- matrix(c("rel_audit", NA, NA, "rel_class"), nrow = 2) |>
+    `dimnames<-`(rep(list(c("fs_audit", "fs_class")), 2))
+err_cov <- matrix(c("ev_audit", NA, NA, "ev_class"), nrow = 2) |>
+    `dimnames<-`(rep(list(c("fs_audit", "fs_class")), 2))
+tspa_mx <- tspa_mx_model(latreg_umx,
+    data = fs_dat,
+    mat_ld = cross_load, mat_vc = err_cov
+)
+# Run OpenMx
+tspa_mx_fit <- mxRun(tspa_mx)
+# Summarize the results
+summary(tspa_mx_fit)
+```
+
+```{r}
+#| results: asis
+# Standardize coefficients
+umxSummary(tspa_mx_fit, digits = 3, std = TRUE,
+           means = FALSE, residuals = FALSE)
+```
+
+## Drinkers Only
+
+From the graphs, it is clear that there was a group of people with the lowest AUDI score, and they make the data violate assumptions of the linear model. We cn limit it to just those who're not at the minimum of AUDIT.
+
+```{r}
+# Prepare data
+fs_dat2 <- fs_dat[fs_dat$fs_audit > min(fs_dat$fs_audit), ]
+tspa_mx2 <- tspa_mx_model(latreg_umx,
+    data = fs_dat2,
+    mat_ld = cross_load, mat_vc = err_cov
+)
+# Run OpenMx
+tspa_mx2_fit <- mxRun(tspa_mx2)
+# Summarize the results
+summary(tspa_mx2_fit)
+```
+
+```{r}
+#| results: asis
+# Standardize coefficients
+umxSummary(tspa_mx2_fit, digits = 3, std = TRUE,
+           means = FALSE, residuals = FALSE)
+```
