@@ -1,0 +1,1194 @@
+---
+title: "Using Two-Stage Path Analysis to Account for Measurement Error and Noninvariance"
+author: "Hok Chio (Mark) Lai"
+institute: "University of Southern California"
+date: "March 27, 2024"
+date-format: long
+bibliography: references.yaml
+format:
+  revealjs:
+    # embed-resources: true
+    css: styles.css
+    chalkboard: false
+    slide-number: true
+---
+
+## Roadmap {background-color="#595959"}
+
+::: {.hidden}
+$$\newcommand{\bv}[1]{\boldsymbol{\mathbf{#1}}}$$
+:::
+
+::: {.incremental}
+- 2S-PA as an alternative to joint SEM modeling
+
+- Example 1: Categorical indicators violating measurement invariance
+
+- Example 2: Growth modeling of latent constructs
+
+- Extensions & Limitations
+:::
+
+::: aside
+Source code of this presentation and the two examples can be found on GitHub: <https://github.com/marklhc/2spa_slides>
+:::
+
+## Path Analysis
+
+```{r}
+#| include: false
+library(semPlot)
+library(semptools)
+library(lavaan)
+m2 <- " eta_Y =~ 1 * fs_y
+        eta_M =~ 1 * fs_m
+        fs_y ~~ theta_y * fs_y
+        fs_m ~~ theta_m * fs_m
+        eta_Y ~ b2 * X + b3 * eta_M
+        eta_M ~ b1 * X "
+factor_layout <- layout_matrix(eta_Y = c(3, 3),
+                               eta_M = c(2, 2),
+                               X = c(4, 1),
+                               fs_y = c(3, 4),
+                               fs_m = c(1, 2))
+p4 <- semPaths(lavaanify(m2),
+               layout = factor_layout, nCharNodes = 0, nCharEdges = 0,
+               edgeLabels = c("", "",
+                              expression(theta[Y]),
+                              expression(theta[M]),
+                              expression(beta[2]),
+                              expression(beta[3]), expression(beta[1]),
+                              "", "", ""),
+               edge.label.cex = 1)
+p4_2 <- change_node_label(
+    p4,
+    list(
+        list(node = "eta_M", to = expression(eta[M])),
+        list(node = "eta_Y", to = expression(eta[Y]))
+    )
+)
+```
+
+```{r}
+#| include: false
+pm2 <- semPlot::semPlotModel(lavaanify(m2))
+pm2_2 <- drop_nodes(pm2, c("fs_y", "fs_m"))
+p5 <- semPaths(pm2_2,
+    layout = factor_layout, nCharNodes = 0, nCharEdges = 0,
+    edgeLabels = c(
+        expression(beta[2]),
+        expression(beta[3]), expression(beta[1]),
+        "", "", ""
+    ),
+    sizeLat = 12, sizeMan = 12,
+    edge.label.cex = 2,
+    mar = c(4, 7, 7, 7)
+)
+p5_2 <- change_node_label(
+    p5,
+    list(
+        list(node = "eta_M", to = expression(eta[M])),
+        list(node = "eta_Y", to = expression(eta[Y]))
+    )
+)
+p5_2b <- change_node_label(
+    p5,
+    list(
+        list(node = "eta_M", to = "Motivation"),
+        list(node = "eta_Y", to = "Achivement")
+    )
+)
+```
+
+```{r}
+plot(p5_2b)
+```
+
+<!-- ![](med_mod_obs.png){fig-align="center"} -->
+
+. . .
+
+But constructs are typically not directly observed
+
+---
+
+### Joint Measurement and Structural Modeling
+
+<!-- With multiple groups -->
+
+::: {.r-stack}
+![](med_mod_jm0.png){.fragment width="90%"}
+
+![](med_mod_jm1.png){.fragment width="90%"}
+
+![](med_mod_jm2.png){.fragment width="90%"}
+:::
+
+---
+
+### Joint Modeling (JM) Not Always Practical
+
+::: {.incremental}
+- Need a large model
+    <!-- * E.g., 3 structural coefficients, but ~ 100 parameters with JM -->
+- Need a large sample
+    * Especially with binary/ordinal indicators
+:::
+
+## Convergence Issues
+
+![](lavaan_convergence.png)
+
+## Alternative 1: Using Composite Scores
+
+```{r}
+#| include: false
+m1 <- " Z_Y ~ b2 * X + b3 * Z_M
+        Z_M ~ b1 * X "
+factor_layout <- layout_matrix(Z_Y = c(3, 3),
+                               Z_M = c(2, 2),
+                               X = c(4, 1))
+p1 <- semPaths(lavaanify(m1),
+               layout = factor_layout, nCharNodes = 0, nCharEdges = 0,
+               edgeLabels = c(expression(beta[2]),
+                              expression(beta[3]), expression(beta[1]),
+                              "", "", ""),,
+               sizeLat = 12, sizeMan = 12,
+               edge.label.cex = 2,
+               mar = c(4, 7, 7, 7))
+p1_2 <- change_node_label(
+    p1,
+    list(
+        list(node = "Z_M", to = expression(Z[M])),
+        list(node = "Z_Y", to = expression(Z[Y]))
+    )
+)
+```
+
+::: {.r-stack}
+
+::: {.fragment}
+```{r}
+plot(p5_2)
+```
+:::
+
+::: {.fragment}
+```{r}
+plot(p1_2)
+```
+:::
+
+:::
+
+. . .
+
+But, imperfect measurement leads to **biased** and **spurious** results
+
+## Unreliability
+
+```{r}
+#| eval: false
+library(ggplot2)
+library(gganimate)
+theme_set(
+    theme_classic(base_size = 16) +
+        theme(panel.grid.major.y = element_line(color = "grey92")))
+
+set.seed(1650)
+num_obs <- 100
+# Measurement Error
+eta2 <- rnorm(num_obs)
+eta2 <- (eta2 - mean(eta2) / sd(eta2)) + 3
+e2 <- rnorm(num_obs)
+e2 <- (e2 - mean(e2) / sd(e2)) * 0.2
+ex2 <- rnorm(num_obs, sd = 0.7)
+df <- data.frame(
+    x = c(eta2),
+    y = c(0.05 + 0.8 * eta2 + e2)
+)
+df4 <- data.frame(
+    x = c(eta2 + ex2),
+    y = c(0.05 + 0.8 * eta2 + e2)
+)
+df4 <- rbind(cbind(df, me = "no"),
+             cbind(df4, me = "yes"))
+p4 <- ggplot(df4, aes(x = x, y = y)) +
+    geom_point() +
+    geom_smooth(se = FALSE, method = "lm") +
+    lims(x = c(0, 6), y = c(0, 6)) +
+    theme(legend.position = c(0.8, 0.2)) +
+    transition_states(
+        me,
+        transition_length = 2,
+        state_length = 1,
+        wrap = FALSE
+    )
+animate(p4,
+    duration = 3,
+    height = 4.28,
+    width = 4.28,
+    units = "in",
+    res = 150,
+    renderer = gifski_renderer(),
+    end_pause = 30
+)
+anim_save("impact-me.gif")
+```
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+::: {.incremental}
+- Bias regression slopes
+    * Unpredictable directions in complex models (Cole & Preacher, 2014)
+:::
+:::
+
+::: {.column width="50%"}
+![](impact-me.gif)
+:::
+
+::::
+
+## Noninvariance/Differential functioning
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+::: {.incremental}
+- Biased/Spurious group differences
+- Biased/Spurious interactions (Hsiao & Lai, 2018)
+:::
+:::
+
+::: {.column width="50%"}
+![](impact-bias-2.gif)
+:::
+
+::::
+
+---
+
+### Alternative 2: Using Factor Scores
+
+::: {.incremental}
+- Factor scores are also not perfectly reliable
+- Some factor scores (e.g., regression scores, EAP scores) are not measurement invariant
+    * Even when accounting for DIF in the model [@lai2023]
+:::
+
+---
+
+### Alternative 3: Two-Stage Path Analysis
+
+![](med_mod_2spa.png){fig-align="center"}
+
+![](https://coehs.unm.edu/uploads/images/faculty-staff/ifce/yu-yu-hsaio.jpg){.absolute right=50 top=50 width="150"}
+
+::: aside
+@lai2022; @lai2023a
+:::
+
+## 2S-PA
+
+:::: {.columns}
+
+::: {.column width="85%"}
+
+::: {.incremental}
+- First stage: Obtain one indicator ($\tilde \eta$) per latent construct ($\eta$)
+    * E.g., regression/Bartlett/sum scores; EAP scores
+    * Adjust for **noninvariance**
+    * Estimate $\lambda^*$ and ${\sigma^*}^2_\varepsilon$
+- Second stage: Single-indicator model with known loading and error variance
+:::
+:::
+
+::: {.column width="15%"}
+![](2spa_indicator.svg){width="80%"}
+:::
+
+::::
+
+## 2S-PA With Discrete Items
+
+- Non-constant measurement error variance across observations^[Also for missing data/multi-sample data]
+
+. . .
+
+:::: {.columns}
+
+::: {.column width="85%"}
+
+- Definition variables
+    * Available in OpenMx and Mplus
+    * Also Bayesian estimation (e.g., Stan)
+
+:::
+
+::: {.column width="15%"}
+![](2spa_indicator_def.svg){width="80%"}
+:::
+
+::::
+
+## 2S-PA With Definition Variables
+
+$$
+  \begin{aligned}
+    \text{Measurement: } & \tilde{\bv \eta}_i = \bv \Lambda^*_{\color{red}i} \bv \eta^*_i + \bv \varepsilon^*_i  \\
+    & \bv \varepsilon^*_i \sim N(\bv 0, \bv \Theta^*_{\color{red}i}) \\
+    \text{Structural: } & \bv \eta^*_{i} = \bv \alpha^* + \bv B^* \bv \eta^*_{i} + \bv \zeta^*_{i}
+  \end{aligned}
+$$
+
+. . .
+
+::: {.callout-note}
+
+@lai2022 and @lai2023a found that, with categorical indicators, 2S-PA yielded
+
+- better [convergence rates]{style="color:red"}, less [SE bias]{style="color:red"}, better [Type I error rate control]{style="color:red"} in small samples, compared to joint SEM modeling (with weighted least squares estimation)
+
+:::
+
+## Example 1: Latent Regression
+
+Multiple-group latent regression
+
+```{r}
+#| include: false
+dat <- readRDS(here::here("lui2019_dat.rds"))
+```
+
+```{r}
+#| include: false
+ex1_mod <- "
+CLASS =~ class1 + class2 + class3 + class4 + class5 + class6 + class7 +
+         class8 + class9 + class10 + class11 + class12 + class13 +
+         class14 + class15
+AUDIT =~ audit4 + audit5 + audit6 + audit7 + audit8 + audit9 + audit10
+AUDIT ~ CLASS
+"
+p1 <- semPlot::semPaths(
+    lavaan::lavaanify(ex1_mod),
+    rotation = 2, nCharNodes = 0)
+```
+
+```{r}
+# set_sem_layout(p1, indicator_spread = c(CLASS = 1.4)) |>
+#     plot()
+plot(p1)
+```
+
+::: aside
+Example from @lui2019
+:::
+
+---
+
+::: {.incremental}
+- Items on 3-to-5 point scales
+- Across 4 ethnic groups (White, Asian, Black, Hispanic)
+- Partial scalar invariance for Item 14 in CLASS
+:::
+
+. . .
+
+::: {.callout}
+
+### Challenges with JM
+
+- One multiple-group model with many invariance constraints for both latent variables
+    * 424 measurement parameters
+- Two-dimensional numerical integration (with ML)
+- DWLS cannot handle missing data
+
+:::
+
+## 2S-PA
+
+- With separate measurement models and EAP Scores
+
+```{r}
+#| echo: true
+#| output-location: column
+# AUDIT
+m1a <- mirt::mirt(
+    dat[, paste0("audit", 4:10)],
+    verbose = FALSE)
+fs_audit <- mirt::fscores(
+    m1a, full.scores.SE = TRUE)
+head(fs_audit)
+```
+
+::: {.incremental}
+- EAP scores are shrinkage scores
+    * $\tilde \eta_i = \lambda^*_i \eta_i + \varepsilon^*_i$
+- $\lambda^*_i$ = shrinkage factor = reliability of $\tilde \eta_i$, and
+- $\text{SE}^2(\tilde \eta_i) = (1 - \lambda^*_i) V(\eta)$
+:::
+
+---
+
+We set $V(\eta)$ = 1. As inputs for 2S-PA, we need to obtain $\lambda^*_i$ and $\tilde \theta^*_i$ as
+
+:::: {.columns}
+
+::: {.column width="53%"}
+
+::: {.incremental}
+- $\lambda^*_i$ = $1 - \text{SE}^2(\tilde \eta_i)$
+- $\theta^*_i$ = $\text{SE}^2(\tilde \eta_i) [1 - \text{SE}^2(\tilde \eta_i)]$
+:::
+
+:::
+
+::: {.column width="47%"}
+
+```{r}
+within(data.frame(fs_audit), {
+    errorvar_i <- SE_F1^2 * (1 - SE_F1^2)
+    loading_i <- 1 - SE_F1^2
+}) |>
+    round(digits = 3) |>
+    head()
+```
+
+:::
+
+::::
+
+. . .
+
+::: {.callout-tip}
+
+## Generalizing to multidimensional measurement models
+
+Software usually gives $\text{ACOV}(\tilde {\bv \eta}_i)$ as output
+
+- $\bv \Lambda^*_i$ = $\bv I - \text{ACOV}(\tilde {\bv \eta}_i) V(\bv \eta)$
+- $\bv \Theta^*_i$ = $\bv \Lambda^*_i \text{ACOV}(\tilde {\bv \eta}_i)$
+
+:::
+
+## {.smaller}
+
+Implementation in R package `R2spa`
+
+```r
+# Prepare data
+fs_dat <- fs_dat |>
+    within(expr = {
+        rel_class <- 1 - class_se^2
+        rel_audit <- 1 - audit_se^2
+        ev_class <- class_se^2 * (1 - class_se^2)
+        ev_audit <- audit_se^2 * (1 - audit_se^2)
+    })
+# Define model
+latreg_umx <- umxLav2RAM(
+    "
+      fs_audit ~ fs_class
+      fs_audit + fs_class ~ 1
+    ",
+    printTab = FALSE
+)
+# lambda (reliability)
+cross_load <- matrix(c("rel_audit", NA, NA, "rel_class"), nrow = 2) |>
+    `dimnames<-`(rep(list(c("fs_audit", "fs_class")), 2))
+# Error of factor scores
+err_cov <- matrix(c("ev_audit", NA, NA, "ev_class"), nrow = 2) |>
+    `dimnames<-`(rep(list(c("fs_audit", "fs_class")), 2))
+# Create model in Mx
+tspa_mx <- tspa_mx_model(latreg_umx,
+    data = fs_dat,
+    mat_ld = cross_load, mat_vc = err_cov
+)
+```
+
+![](https://mmmlab.rbind.io/static/images/slickr_files/2spa_team_lunch.jpg){.absolute right=50 top=50 width="200"}
+
+::: aside
+Lai M, Li Y, Tse W, Zhang G (2024). R2spa: An R package for two-stage path analysis (2S-PA) to adjust for measurement errors. R package version 0.0.3, <https://gengrui-zhang.github.io/R2spa/>. 
+:::
+
+---
+
+```{r}
+#| fig-width: 4.5
+#| fig-height: 3
+library(ggplot2)
+theme_set(theme_bw())
+# CLASS
+# Free intercepts for item 14
+m2c <- mirt::multipleGroup(
+    dat[, paste0("class", 1:15)],
+    group = dat$eth,
+    invariance = c(
+        paste0("class", c(1:13, 15)),
+        "slopes", "free_mean", "free_var"
+    ),
+    verbose = FALSE
+)
+fs_class <- mirt::fscores(m2c, full.scores.SE = TRUE)
+colnames(fs_class) <- c("fs_class", "class_se")
+colnames(fs_audit) <- c("fs_audit", "audit_se")
+fs_dat <- data.frame(cbind(fs_class, fs_audit))
+# Plot
+p1 <- ggplot(
+    data = fs_dat,
+    aes(x = fs_class, y = fs_audit)
+) +
+    geom_point(size = 0.5, alpha = 0.5) +
+    facet_wrap(~ dat$eth)
+# With error bar
+p1 +
+    geom_errorbar(aes(
+        xmin = fs_class - class_se,
+        xmax = fs_class + class_se
+    ), linewidth = 0.1) +
+    geom_errorbar(aes(
+        ymin = fs_audit - audit_se,
+        ymax = fs_audit + audit_se
+    ), linewidth = 0.1) +
+    labs(x = "fs_CLASS", y = "fs_AUDIT")
+```
+
+---
+
+```{r}
+data.frame(
+    est = c(0.614, 0.543, 0.669),
+    se = c(0.030, 0.024, 0.027),
+    ci = c("[0.556, 0.672]", "[0.495, 0.590]", "[0.617, 0.722]"),
+    row.names = c("Joint Modeling[^1]", "Factor score regression<sup>2</sup>", "2S-PA[^2]")
+) |> knitr::kable(caption = "Comparison of **standardized coefficients** (CLASS &rarr; AUDIT)")
+```
+
+[^1]: With DWLS estimation and assuming invariance
+
+[^2]: With separate measurement models, EAP scores, and maximum likelihood estimation
+
+---
+
+::: {.callout-tip}
+
+## 2S-PA is Flexible
+
+- I used MG-IRT for CLASS to model partial invariance, and single-group IRT for AUDIT to assume invariance
+:::
+
+. . .
+
+But Choices Needed To Be Made . . .
+
+::: {.incremental}
+- Joint vs. separate measurement models
+- Types of factor scores
+- Frequentist vs. Bayesian estimation^[@lai2022 found that structural coefficients were better estimated when using Bayesian estimates of factor scores and standard errors.]
+:::
+
+---
+
+:::: {.columns}
+
+::: {.column width="47%"}
+
+::: {.callout}
+
+## Joint: Multidimensional model
+
+![](joint_measurement.png){width="53%" fig-align="center"}
+
+::: {.incremental}
+- Same complexity as joint modeling
+- Needed when there are
+    * longitudinal invariance
+    * Cross-loadings/error covariances
+- Assumes correct measurement model
+:::
+
+:::
+:::
+
+::: {.column width="53%"}
+
+::: {.callout}
+
+## Separate: Several unidimensional models
+
+![](separate_measurement.png){width="47%" fig-align="center"}
+
+::: {.incremental}
+- Can use different software for different components
+- Less complexity, but less efficiency
+- Biased when ignoring misspecification
+    * May have some robustness
+- Can have separate multidimensional/unidimensional models
+:::
+
+:::
+:::
+
+::::
+
+## Types of Factor Scores
+
+- Sum scores (or mean scores)
+- Shrinkage scores
+    * Regression scores, EAP scores, MAP scores
+- Maximum likelihood (ML) scores
+    * Bartlett scores, ML scores in IRT
+
+::: aside
+cf. @thissen2020
+:::
+
+---
+
+## Simulation Results in @lai2023a
+
+- All three types of scores performed reasonably well (as long as the right $\lambda^*$ and $\Theta^*$ are used)
+- Using [sum scores]{style="color:blue"} give better RMSE, SE bias, and coverage in small samples/low reliability conditions
+
+---
+
+## {.smaller}
+
+cf. @lai2023a
+
+|     | Composite scores | Regression scores^[also EAP and MAP scores] | Bartlett scores^[also ML scores] |
+|:---:|:----------------:|:-----------------:|:--------:|
+| Observed variance | $\bv 1^\top \bv \Sigma_X \bv 1$ | $\psi^2 \bv \lambda^\top \bv \Sigma_X^{-1} \bv \lambda$ | $\psi + (\bv \lambda^\top \bv \Theta^{-1} \bv \lambda)^{-1}$ |
+| $\lambda^*$ | $\sum_j \lambda_j$ | $\psi \bv \lambda^\top \bv \Sigma_X^{-1} \bv \lambda$ | 1 |
+| Reliability | $\dfrac{(\sum_j \lambda_j)^2 \psi}{\bv 1^\top \bv \Sigma_X \bv 1}$ | $\psi \bv \lambda^\top \bv \Sigma_X^{-1} \bv \lambda$ | $\dfrac{\psi}{\psi + (\bv \lambda^\top \bv \Theta^{-1} \bv \lambda)^{-1}}$ |
+
+::: aside
+$\bv \Sigma_X$ = covariance matrix of indicators; $\psi$ = latent variance; $\lambda_j$ = loading of indicator $j$; $\bv \Theta$ = error covariance of indicators
+:::
+
+## Example 2: Longitudinal Model
+
+ECLS-K: Achievement (Science, Reading, Math) across Grades 3, 5, and 8
+
+```{r}
+measurement_mod <- "
+# factor loadings (with constraints)
+eta1 =~ s_g3 + l2 * r_g3 + m_g3
+eta2 =~ s_g5 + l2 * r_g5 + m_g5
+eta3 =~ s_g8 + l2 * r_g8 + m_g8
+
+# unique variances/covariances 
+s_g3 ~~ u1 * s_g3 + s_g5 + s_g8
+s_g5 ~~ u1 * s_g5 + s_g8
+s_g8 ~~ u1 * s_g8
+r_g3 ~~ u2 * r_g3 + r_g5 + r_g8
+r_g5 ~~ u2 * r_g5 + r_g8
+r_g8 ~~ u2 * r_g8
+m_g3 ~~ u3 * m_g3 + m_g5 + m_g8
+m_g5 ~~ u3 * m_g5 + m_g8
+m_g8 ~~ u3 * m_g8
+
+# observed variable intercepts
+s_g3 ~ 1
+s_g5 ~ 1
+s_g8 ~ 1
+r_g3 ~ i2 * 1
+r_g5 ~ i2 * 1
+r_g8 ~ i2 * 1
+m_g3 ~ 1
+m_g5 ~ 1
+m_g8 ~ 1
+"
+
+jsem_growth_mod <- paste0(measurement_mod, "
+# factor variances
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+# latent basis model
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+s =~ 0 * eta1 + start(.5) * eta2 + 1 * eta3
+
+i ~~ start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i ~ 0 * 1
+s ~ 1
+")
+```
+
+```{r}
+#| include: false
+pp <- 
+semPlot::semPaths(
+    lavaan::lavaanify(jsem_growth_mod),
+    nCharNodes = 0,
+    style = "ram")
+# labs <- pp$graphAttributes$Edges$labels
+# labs[which(labs == "l2")] <- "ll2"
+# labs[which(labs == "psi")] <- rep(expression(psi), 3)
+plgm <- semPlot::semPaths(
+    lavaan::lavaanify(jsem_growth_mod),
+    nCharNodes = 0,
+    # edgeLabels = labs,
+    edge.label.cex = 1)
+plgm_2 <- change_node_label(
+    plgm,
+    list(
+        list(node = "eta1", to = expression(eta[1])),
+        list(node = "eta2", to = expression(eta[2])),
+        list(node = "eta3", to = expression(eta[3]))
+    )
+)
+```
+
+```{r}
+plot(plgm_2)
+```
+
+## Interpretational Confounding
+
+A challenge of joint modeling is that the definition of latent variables can change across models
+
+. . .
+
+|         | Latent Basis| No Growth| Measurement Only|
+|:--------|------------:|---------:|----------------:|
+| Science |        14.87|     18.57|            14.83|
+| Reading |        21.47|     28.19|            21.39|
+| Math    |        20.20|     25.93|            20.11|
+
+&uarr; Note the loadings change across different models
+
+## Longitudinal Model With 2S-PA
+
+::: {.incremental}
+- Stage 1a: Longitudinal invariance model
+    * configural &rarr; metric &rarr; scalar &rarr; strict [e.g., @widaman1997]
+    * alignment optimization [@asparouhov2014; @lai2023b]
+- Stage 1b: Scoring and measurement properties
+    * Regression scores, Bartlett scores, etc
+- Stage 2: Growth model with $q$ indicators ($q$ = number of time points)
+:::
+
+---
+
+### Note on Scoring
+
+> With cross-loadings and/or correlated errors, scoring should be done with a joint multidimensional factor model
+
+::: {.callout}
+
+## Mean structure
+
+$$
+\tilde{\bv \eta}_i = \bv {\color{red}b^*}_{\color{red}i} + \bv \Lambda^*_i \bv \eta^*_i + \bv \varepsilon^*_i
+$$
+
+::: {.incremental}
+- Bartlett scores are convenient, as generally we have
+    * $\bv b^*$ = 0 and $\bv \Lambda^*_i = \bv I$
+    * But they may be less reliable than regression scores
+:::
+:::
+
+## Sample Code {.smaller}
+
+```{r}
+#| include: false
+eclsk <- readRDS(here::here("eclsk.rds"))
+```
+
+```r
+# Get factor scores from partial scalar invariance model
+fs_dat <- R2spa::get_fs(eclsk, model = pscalar_mod)
+
+# Growth model
+tspa_growth_mod <- "
+i =~ 1 * eta1 + 1 * eta2 + 1 * eta3
+s =~ 0 * eta1 + start(.5) * eta2 + 1 * eta3
+
+# factor error variances (assume homogeneity)
+eta1 ~~ psi * eta1
+eta2 ~~ psi * eta2
+eta3 ~~ psi * eta3
+
+i ~~ start(.8) * i
+s ~~ start(.5) * s
+i ~~ start(0) * s
+
+i + s ~ 1
+"
+# Fit the growth model
+tspa_growth_fit <- tspa(tspa_growth_mod, fs_dat,
+                        fsT = attr(fs_dat, "fsT"),
+                        fsL = attr(fs_dat, "fsL"),
+                        fsb = attr(fs_dat, "fsb"),
+                        estimator = "ML")
+summary(tspa_growth_fit)
+```
+
+![](https://winniewytse.rbind.io/img/wwytse.jpg){.absolute right=50 top=50 width="150"}
+
+::: aside
+Based on the example by Winnie Tse at <https://gengrui-zhang.github.io/R2spa/articles/tspa-growth-vignette.html>
+:::
+
+---
+
+## {.smaller}
+
+|Parameter  |Model        |   Est|    SE| LRT $\chi^2$|
+|:----------|:------------|-----:|-----:|--------:|
+|Mean slope |JSEM         | 1.873| 0.025| 2223.513|
+|           |2S-PA (Reg)  | 1.874| 0.018| 2271.428|
+|           |2S-PA (Bart) | 1.874| 0.018| 2271.428|
+|           |FS (Reg)     | 1.874| 0.010| 3282.137|
+|           |FS (Bart)    | 1.874| 0.019| 2248.001|
+|Var slope  |JSEM         | 0.099| 0.017|         |
+|           |2S-PA (Reg)  | 0.100| 0.016|         |
+|           |2S-PA (Bart) | 0.100| 0.016|         |
+|           |FS (Reg)     | 0.065| 0.004|         |
+|           |FS (Bart)    | 0.141| 0.016|         |
+
+::: aside
+FS = using factor scores without any adjustment
+:::
+
+---
+
+## Further Adjustment
+
+2S-PA treats $\bv \Lambda^*$ and $\bv \Theta^*$ as known
+
+- When these are estimated, and their uncertainty is ignored,
+    * SE maybe underestimated in the structural model
+
+Solution 1: Bayesian estimation of factor scores [@lai2022]
+
+---
+
+Solution 2: Incorporating SE of $\bv \Lambda^*$ and $\bv \Theta^*$ [@meijer2021]^[implemented in the `vcov_corrected()` option in `R2spa`]
+
+![](corrected_se.png)
+
+## Extension: Latent Interactions
+
+Tedious to do product indicators
+
+```{r}
+#| include: false
+latint_mod <- "
+    Fx =~ x1 + x2 + x3 + x4
+    Fm =~ m1 + m2 + m3
+    Fxm =~ x1m1 + x1m2 + x1m3 + x1m4 + 
+           x2m1 + x2m2 + x2m3 + x2m4 +
+           x3m1 + x3m2 + x3m3 + x3m4 +
+           x4m1 + x4m2 + x4m3 + x4m4
+    Fx ~~ Fm + Fxm
+    Fm ~~ Fxm
+    y ~ Fx + Fm + Fxm
+"
+plint <- semPaths(
+    lavaanify(latint_mod),
+    sizeMan = 8,
+    nCharNodes = 0,
+    node.width = 0.75,
+    style = "ram",
+    mar = c(5, 5, 5, 5))
+factor_layout <- layout_matrix(Fx = c(1, 1),
+                               Fm = c(2, 1),
+                               Fxm = c(3, 1),
+                               y = c(2, 2))
+indicator_order <- c(paste0("x", 1:4), paste0("m", 1:3),
+                     "x1m1", "x1m2", "x1m3",
+                     "x2m1", "x2m2", "x2m3",
+                     "x3m1", "x3m2", "x3m3",
+                     "x4m1", "x4m2", "x4m3")
+indicator_factor <- rep(c("Fx", "Fm", "Fxm"), c(4, 3, 12))
+plint_2 <- set_sem_layout(
+    plint,
+    indicator_order = indicator_order,
+    indicator_factor = indicator_factor,
+    factor_layout = factor_layout,
+    factor_point_to = c(Fx = "up", Fm = "left", Fxm = "down"),
+    indicator_spread = c(Fx = 1, Fm = 1.7, Fxm = 2.1)
+)
+```
+
+```{r}
+plot(plint_2)
+```
+
+![](https://dornsife.usc.edu/psyc/wp-content/uploads/sites/81/2023/03/gz.jpeg){.absolute top=50 right=50 width="150"}
+
+---
+
+With 2S-PA, just one product factor score indicator
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+```{r}
+#| include: false
+latint_mod <- "
+    Fx =~ fs_x
+    Fm =~ fs_m
+    Fxm =~ fs_xm
+    Fx ~~ Fm + Fxm
+    Fm ~~ Fxm
+    y ~ Fx + Fm + Fxm
+"
+factor_layout <- matrix(
+    c("fs_x", "Fx", NA,
+      "fs_m", "Fm", "y",
+      "fs_xm", "Fxm", NA),
+    byrow = TRUE, nrow = 3,
+)
+plint_2spa <- semPaths(
+    lavaanify(latint_mod),
+    sizeMan = 8,
+    sizeLat = 8,
+    nCharNodes = 0,
+    node.width = 1.5,
+    label.cex = 1.15,
+    style = "ram",
+    rotation = 2,
+    layout = factor_layout,
+    mar = c(5, 5, 5, 5))
+```
+
+```{r}
+plot(plint_2spa)
+```
+
+::: {.content-hidden unless-meta="format.revealjs.chalkboard"}
+![](Zhang_table3.png)
+:::
+
+:::
+
+::: {.column width="50%"}
+
+::: {.incremental}
+- Bias and SE bias for 2S-PA-Int was in acceptable range in all conditions
+- Overall, better coverage and RMSE than product indicators
+:::
+
+:::
+
+::::
+
+---
+
+## Extension: Location-Scale Modeling
+
+:::: {.columns}
+
+::: {.column width="45%"}
+
+*With measurement error*
+
+- Predicting individual-specific mean (location) and fluctuation/variance (scale) over time
+
+:::
+
+::: {.column width="55%"}
+
+::: {.content-hidden unless-meta="format.revealjs.chalkboard"}
+![](Blozis_fig1.png){fig-align="center"}
+:::
+
+:::
+
+::::
+
+::: aside
+Collaborative work with Shelley Blozis (UC Davis)
+:::
+
+---
+
+Estimates are virtually identical to those with joint modeling
+
+::: {.content-hidden unless-meta="format.revealjs.chalkboard"}
+![](Blozis&Lai_table1.png){width="52%" fig-align="center"}
+:::
+
+::: aside
+Blozis & Lai (2024, IMPS Proceedings); code available at <https://github.com/marklhc/2s-mels>
+:::
+
+---
+
+## Other Extensions Underway
+
+::: {.incremental}
+- Latent interaction with categorical indicators
+- Location scale model with partial invariance
+- Random coefficients from multilevel models
+    * E.g., individual-specific slope for self-efficacy &rarr; individual-specific slope for achievement
+- Vector autoregressive modeling [(Rein, Vermunt, & de Roover, preprint)](https://osf.io/preprints/psyarxiv/a2muk)
+:::
+
+## Compare to Other Approaches {visibility="hidden"}
+
+::: {.callout}
+
+## Structural After Measurement (`lavaan::sam()`)
+
+- Expand on the idea by @croon2002 by using the factor scoring matrix
+- Fit indices are developed, with active support in `lavaan`
+- Currently limited to continuous data with no missing data support
+- Cross-group constraints not supported
+- Requires item-level data
+
+:::
+
+. . .
+
+::: {.callout}
+
+## Meta-analytic SEM (`metaSEM`)
+
+- Analyze pooled correlation matrix with known measurement error with WLS
+- Further comparison is needed
+
+:::
+
+## Limitations/Future Work
+
+::: {.incremental}
+- Account for uncertainty is $\bv \Lambda^*_i$, $\bv \Theta^*_i$, and $\bv b^*_i$
+- Requires error covariance matrix of factor scores
+    * Or some estimates of reliability
+- Incorporate auxiliary variables for missing data
+    * And potentially applicable to multiply imputed data
+- More simulation results
+:::
+
+## Simulation Study {visibility="hidden"}
+
+:::: {.columns}
+
+::: {.column width="40%"}
+![](med_mod_obs.png)
+:::
+
+::: {.column width="60%"}
+- Treatment ($X$, observed)
+- Mediator ($\eta_M$, 6 continuous indicators)
+- Outcome ($\eta_Y$, 16 binary indicators)
+:::
+
+::::
+
+. . . 
+
+- Two groups ($n$ = 50, 100, 300, 1000 per group)
+- 3 noninvariant items for $\eta_M$, 5 for $\eta_Y$
+
+::: aside
+[@lai2023a; Simulation code and results at <https://github.com/marklhc/2spa-inv-supp>]
+:::
+
+## Results {visibility="hidden"}
+
+- Convergence rate (%)
+
+| $n$  | JM         | 2S-PA |
+|------|-----------:|------:|
+| 50   |   8.29     | 89.80 |
+| 100  |  32.56     |   100 |
+| 300  |  82.64     |   100 |
+| 1000 |  99.66     |   100 |
+
+::: aside
+- JM uses DWLS estimation (sandwich-type standard errors)
+- 2S-PA uses CFA (ML) for $\eta_M$ (regression factor scores), and IRT (`mirt`, 2PL) for $\eta_Y$ (EAP scores) for stage 1, and ML estimation for stage 2
+:::
+
+## {visibility="hidden"}
+
+![](2spa_inv_bias.png){fig-align="center"}
+
+::: {.notes}
+Here are the results for parameter bias. The x-axis shows the sample size per group, and the y axis shows the parameter bias in estimation. The coefficients $\beta_1$ to $\beta_3$ were the individual path coefficients, and the last row shows the product coefficient, or the indirect effect. 
+
+As you can see, when the true coefficient is zero, there were little bias with either 2S-PA, which are the red circles, or joint models, with are the blue triangles. However, when the true coefficient is nonzero, 2S-PA gave less bias when the sample size is small.
+:::
+
+## {visibility="hidden"}
+
+![](2spa_inv_coverage.png){fig-align="center"}
+
+## Acknowledgment {.smaller}
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+Undergraduate and Graduate students
+
+- Yixiao Li
+- Meltem Ozcan
+- Wing-Yee (Winnie) Tse
+- Gengrui (Jimmy) Zhang
+- Yichi Zhang
+
+:::
+
+::: {.column width="50%"}
+
+Collaborators
+
+- Shelley Blozis
+- Yu-Yu Hsiao
+- George B. Richardson
+- Dave Raichlen
+
+![](https://live.staticflickr.com/8184/8384883516_e993719287_z.jpg){fig-align="right" width="40%"}
+
+:::
+
+::::
+
+::: aside
+This research is based on work supported by the National Science Foundation under Grant No. 2141790.
+:::
+
+::: {.notes}
+Finally, I would like to acknowledge my undergraduate students, my graduate students, my collaborators and mentors, and the funding agencies. Without them, my work wouldn't be possible.
+:::
+
+## Thank You!
+
+<hokchiol@usc.edu>
+
+## References
+
+::: {#refs}
+:::
+
+## Discrete Indicators {visibility="hidden"}
+
+E.g., CES-D items (4-point); MoCA (binary and ordinal)
+
+. . .
+
+Challenges in JM Estimation
+
+::: {.incremental}
+- Maximum likelihood
+    * Numerical integration with high dimensions
+- Weighted least squares
+    * Need a large sample to be accurate
+:::
+
