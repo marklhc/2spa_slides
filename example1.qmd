@@ -12,6 +12,8 @@ library(dplyr)
 library(ggplot2)
 library(mirt)
 library(umx)
+# install.packages("remotes")
+# remotes::install_github("Gengrui-Zhang/R2spa")
 library(R2spa)
 ```
 
